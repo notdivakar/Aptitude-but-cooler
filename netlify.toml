@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Set these in the Netlify dashboard (Site settings -> Environment variables),
+# never commit real values:
+#   DATABASE_URL        postgres connection string (Neon / Supabase / Prisma Postgres)
+#   NEXTAUTH_URL         e.g. https://your-site.netlify.app
+#   NEXTAUTH_SECRET      random 32+ char string, `openssl rand -base64 32`
+#   GOOGLE_CLIENT_ID      from Google Cloud Console OAuth credentials
+#   GOOGLE_CLIENT_SECRET
