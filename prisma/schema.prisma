@@ -1,0 +1,389 @@
+// AptiQuest — Prisma schema
+// Phase 1-2 models are fully wired into the app (User, Question, Category,
+// Topic, Attempt, Quiz, TopicProgress). Phase 3-6 models (Achievement,
+// DailyChallenge, LeaderboardEntry, Friendship, Challenge, ImportJob,
+// ImportQuestion) are defined now so migrations don't need reshaping later,
+// but their UI/API surface is only partially built — see README for status.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth (NextAuth / Auth.js) ----------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String? // set only for credentials sign-up
+
+  role      Role     @default(STUDENT)
+  college   String?
+  onboarded Boolean  @default(false)
+  goal      String? // "Campus Placements" | "CAT" | "Government Exams" | "General Aptitude"
+  startingLevel String? // "Beginner" | "Intermediate" | "Advanced"
+
+  totalXP           Int       @default(0)
+  coins             Int       @default(0)
+  currentStreak     Int       @default(0)
+  longestStreak     Int       @default(0)
+  lastActiveDate    DateTime?
+  lastDailyChallenge DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  attempts        Attempt[]
+  quizzes         Quiz[]
+  topicProgress   TopicProgress[]
+  achievements    UserAchievement[]
+  leaderboardRows LeaderboardEntry[]
+  importJobs      ImportJob[]
+
+  friendshipsA Friendship[] @relation("FriendshipUserA")
+  friendshipsB Friendship[] @relation("FriendshipUserB")
+  challengesSent     Challenge[] @relation("ChallengeFrom")
+  challengesReceived Challenge[] @relation("ChallengeTo")
+
+  @@index([totalXP])
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- Content hierarchy ----------
+
+model Category {
+  id    String @id @default(cuid())
+  name  String @unique // "Quantitative Aptitude" | "Logical Reasoning" | "Verbal Ability"
+  slug  String @unique
+  order Int    @default(0)
+
+  topics Topic[]
+}
+
+model Topic {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String
+  order      Int      @default(0)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  questions     Question[]
+  topicProgress TopicProgress[]
+
+  @@unique([categoryId, slug])
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionType {
+  MCQ
+  NUMERICAL
+  TRUE_FALSE
+  MULTI_SELECT
+}
+
+model Question {
+  id             String       @id @default(cuid())
+  type           QuestionType @default(MCQ)
+  question       String       @db.Text
+  options        Json // string[]
+  correctAnswer  Json // index (number) for MCQ, or value for NUMERICAL/TRUE_FALSE/MULTI_SELECT
+  explanation    String       @db.Text
+  difficulty     Difficulty   @default(MEDIUM)
+  tags           String[]     @default([])
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  topicId    String
+  topic      Topic    @relation(fields: [topicId], references: [id])
+
+  // Future-ready fields, unused by current UI (Section 9 of spec)
+  imageUrl String?
+  chartData Json?
+
+  // Provenance — required by the ingestion pipeline (Section 10)
+  source      String? // human-readable source name
+  sourceUrl   String?
+  sourceType  SourceType @default(SEED)
+  contentHash String     @unique // normalized-content hash, used for dedup
+
+  reviewStatus ReviewStatus @default(APPROVED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attempts       Attempt[]
+  quizQuestions  QuizQuestion[]
+  importQuestion ImportQuestion?
+
+  @@index([categoryId, topicId, difficulty])
+}
+
+enum SourceType {
+  SEED
+  ADMIN
+  IMPORTED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ---------- Attempts / quizzes ----------
+
+model Quiz {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode      QuizMode
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+  xpEarned  Int      @default(0)
+  accuracy  Float? // 0-100, set on finish
+
+  questions QuizQuestion[]
+  attempts  Attempt[]
+
+  @@index([userId, startedAt])
+}
+
+enum QuizMode {
+  PRACTICE
+  SPEED_RUN
+  EXAM
+  DAILY_CHALLENGE
+  SURVIVAL
+  BOSS_BATTLE
+  WEAKNESS
+  MISTAKES_REVIEW
+}
+
+model QuizQuestion {
+  id         String   @id @default(cuid())
+  quizId     String
+  quiz       Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+  order      Int
+
+  @@unique([quizId, questionId])
+}
+
+model Attempt {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId     String
+  question       Question @relation(fields: [questionId], references: [id])
+  quizId         String?
+  quiz           Quiz?    @relation(fields: [quizId], references: [id], onDelete: SetNull)
+
+  selectedAnswer Json
+  correct        Boolean
+  timeTakenMs    Int
+  difficulty     Difficulty
+  xpEarned       Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, correct])
+  @@index([questionId])
+}
+
+model TopicProgress {
+  id         String @id @default(cuid())
+  userId     String
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId    String
+  topic      Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  attempts    Int   @default(0)
+  correct     Int   @default(0)
+  masteryPct  Float @default(0) // 0-100, recomputed on each attempt
+  lastPracticed DateTime?
+
+  @@unique([userId, topicId])
+  @@index([userId])
+}
+
+// ---------- Gamification ----------
+
+model Achievement {
+  id          String @id @default(cuid())
+  key         String @unique // e.g. "first_blood"
+  name        String
+  description String
+  icon        String @default("award")
+  xpReward    Int    @default(50)
+
+  unlockedBy UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  unlockedAt    DateTime    @default(now())
+
+  @@unique([userId, achievementId])
+}
+
+model DailyChallenge {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  questionIds String[]
+  xpReward  Int      @default(100)
+  coinReward Int     @default(25)
+}
+
+model LeaderboardEntry {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period LeaderboardPeriod
+  periodKey String // e.g. "2026-W34" or "2026-08" or "all"
+  xp     Int    @default(0)
+
+  @@unique([userId, period, periodKey])
+  @@index([period, periodKey, xp])
+}
+
+enum LeaderboardPeriod {
+  WEEKLY
+  MONTHLY
+  ALL_TIME
+}
+
+// ---------- Social (architecture only — Section 35) ----------
+
+model Friendship {
+  id        String           @id @default(cuid())
+  userAId   String
+  userA     User             @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User             @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  status    FriendshipStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+
+  @@unique([userAId, userBId])
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+model Challenge {
+  id         String   @id @default(cuid())
+  fromUserId String
+  fromUser   User     @relation("ChallengeFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId   String
+  toUser     User     @relation("ChallengeTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  topicSlug  String
+  fromScore  Int?
+  toScore    Int?
+  status     String   @default("pending")
+  createdAt  DateTime @default(now())
+}
+
+// ---------- Content ingestion (Section 10-14, architecture only) ----------
+
+model ImportJob {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  sourceName    String
+  categorySlug  String?
+  topicSlug     String?
+  maxQuestions  Int       @default(100)
+  status        ImportStatus @default(QUEUED)
+  pagesScanned  Int       @default(0)
+  found         Int       @default(0)
+  valid         Int       @default(0)
+  duplicates    Int       @default(0)
+  needsReview   Int       @default(0)
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  errorMessage  String?
+
+  importQuestions ImportQuestion[]
+}
+
+enum ImportStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ImportQuestion {
+  id         String       @id @default(cuid())
+  jobId      String
+  job        ImportJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  questionId String?      @unique
+  question   Question?    @relation(fields: [questionId], references: [id])
+  rawPayload Json
+  status     ReviewStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+}
