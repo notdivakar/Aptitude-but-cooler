@@ -106,6 +106,7 @@ model Category {
   order Int    @default(0)
 
   topics Topic[]
+  questions Question[]
 }
 
 model Topic {
