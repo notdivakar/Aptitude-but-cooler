@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -211,7 +212,6 @@ async function main() {
   }
 
   console.log("Seeding a demo admin account (admin@aptiquest.dev / admin1234)…");
-  const bcrypt = await import("bcryptjs");
   await prisma.user.upsert({
     where: { email: "admin@aptiquest.dev" },
     update: {},
